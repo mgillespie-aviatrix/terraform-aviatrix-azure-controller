@@ -7,7 +7,7 @@ import traceback
 import requests
 
 # The wait time from experience is between 60 to 600 seconds
-default_wait_time_for_apache_wakeup = 300
+default_wait_time_for_apache_wakeup = 600
 
 
 class AviatrixException(Exception):
@@ -120,13 +120,31 @@ def function_handler(event):
 
     # Step7. Initial Setup for Aviatrix Controller by Invoking Aviatrix API
     logging.info("Start: Aviatrix Controller initial setup")
-    response = run_initial_setup(
-        api_endpoint_url=api_endpoint_url,
-        CID=CID,
-        target_version=controller_init_version,
-    )
-    verify_aviatrix_api_run_initial_setup(response=response)
-    logging.info("End: Aviatrix Controller initial setup")
+
+    MAX_RETRY =  5
+    for attempt in range(1, MAX_RETRY):
+        try:
+            response = run_initial_setup(
+                api_endpoint_url=api_endpoint_url,
+                CID=CID,
+                target_version=controller_init_version,
+            )
+            logging.info("Waiting 3 minutes for initial setup to complete...")
+            time.sleep(180)
+            verify_aviatrix_api_run_initial_setup(response=response)    
+            logging.info("End: Aviatrix Controller initial setup")
+            break
+
+        except Exception as e:
+            logging.error(f"Attempt {attempt} failed with error: {e}")
+            if attempt == MAX_RETRY:
+                logging.critical("Exceeded maximum retry attempts. Failing the setup.")
+                raise  # Re-raise the exception after max retries
+            else:
+                logging.info("Retrying inital setup...")
+
+
+
 
     # Step8. Wait until apache server of controller is up and running after initial setup
     logging.info(
@@ -140,7 +158,7 @@ def function_handler(event):
         interval_wait_time=10,
     )
     logging.info(
-        "End: Wait until API server of Aviatrix Controller is up ans running after initial setup"
+        "End: Wait until API server of Aviatrix Controller is up and running after initial setup"
     )
 
     # Step9. Re-login
@@ -191,7 +209,7 @@ def wait_until_controller_api_server_is_ready(
     hostname="123.123.123.123",
     api_version="v1",
     api_route="api",
-    total_wait_time=300,
+    total_wait_time=default_wait_time_for_apache_wakeup,
     interval_wait_time=10,
 ):
     payload = {"action": "login", "username": "test", "password": "test"}
@@ -239,13 +257,13 @@ def wait_until_controller_api_server_is_ready(
                     is_apache_returned_200 = True
 
                 response_message = py_dict["reason"]
-                response_msg_indicates_backend_not_ready = "Valid action required"
-                response_msg_request_refused = "RequestRefused"
+                responses_not_ready = ["Valid action required", "RequestRefused", "after the maintenance action is finished"]
+
+
                 # case1:
                 if (
-                    py_dict["return"] is False
-                    and (response_msg_indicates_backend_not_ready in response_message
-                    or response_msg_request_refused in response_message)
+                    py_dict["return"] is False and 
+                    (any(filter_str in response_message for filter_str in responses_not_ready))
                 ):
                     is_api_service_ready = False
                     logging.info(
@@ -352,7 +370,7 @@ def send_aviatrix_api(
     api_endpoint_url="https://123.123.123.123/v1/api",
     request_method="POST",
     payload=dict(),
-    retry_count=5,
+    retry_count=10,
     timeout=None,
 ):
     response = None
@@ -731,11 +749,20 @@ def set_aviatrix_customer_id(
     logging.info("Request method is: %s", str(request_method))
     logging.info("Request payload is : %s", str(json.dumps(obj=data, indent=4)))
 
-    response = send_aviatrix_api(
-        api_endpoint_url=api_endpoint_url,
-        request_method=request_method,
-        payload=data,
-    )
+    retry = 10
+    while retry > 0:
+        response = send_aviatrix_api(
+            api_endpoint_url=api_endpoint_url,
+            request_method=request_method,
+            payload=data,
+        )
+        py_dict = response.json()
+        if py_dict["return"] is False:
+            logging.info("Retrying set_aviatrix_customer_id...")
+            time.sleep(60)
+            retry -= 1
+        else:
+            retry = 0
     return response
 
 
