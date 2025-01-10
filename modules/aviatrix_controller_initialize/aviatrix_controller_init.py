@@ -129,9 +129,9 @@ def function_handler(event):
                 CID=CID,
                 target_version=controller_init_version,
             )
-            logging.info("Waiting 3 minutes for initial setup to complete...")
-            time.sleep(180)
-            verify_aviatrix_api_run_initial_setup(response=response)    
+
+            #Here we need to check initial setup. 
+            verify_aviatrix_api_run_initial_setup(response=response)
             logging.info("End: Aviatrix Controller initial setup")
             break
 
@@ -141,6 +141,24 @@ def function_handler(event):
                 logging.critical("Exceeded maximum retry attempts. Failing the setup.")
                 raise  # Re-raise the exception after max retries
             else:
+                logging.info("Waiting 3 minutes for initial setup to complete...")
+                time.sleep(180)
+                logging.info("Start: Issuing a new login in as admin with new password")
+                response = login(
+                    api_endpoint_url=api_endpoint_url,
+                    username="admin",
+                    password=new_admin_password,
+                )
+                CID = response.json()["CID"]
+                
+                logging.info("START: Check if Aviatrix Controller has already been initialized")
+                is_controller_initialized = has_controller_initialized(
+                    api_endpoint_url=api_endpoint_url,
+                    CID=CID,
+                )
+                if is_controller_initialized:
+                    logging.info("END: Controller appears to be initialized")
+                    break
                 logging.info("Retrying inital setup...")
 
 
@@ -711,11 +729,15 @@ def run_initial_setup(
 
 def verify_aviatrix_api_run_initial_setup(response=None):
     if not response:
-        return
+        err_msg = (
+            "Initial setup connection timed out"
+        )
+        raise AviatrixException(message=err_msg)
     py_dict = response.json()
     logging.info("Aviatrix API response is: %s", str(py_dict))
 
     response_code = response.status_code
+    logging.info("Aviatrix API response code is: %s", str(response_code))
     if response_code != 200:
         err_msg = (
             "Fail to run initial setup for the Aviatrix Controller. The actual response code is "
